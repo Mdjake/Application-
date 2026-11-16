@@ -112,14 +112,8 @@ TOOLS = [
         "this if the user's message explicitly asks for the reset AND contains the word "
         "'confirm'. Otherwise do not call it: reply asking them to repeat the request "
         "with the word 'confirm'.",
-        {
-            "subject": _SUBJECT_PROP,
-            "confirm": {
-                "type": "boolean",
-                "description": "Must be true. Set only if the user said 'confirm'.",
-            },
-        },
-        ["subject", "confirm"],
+        {"subject": _SUBJECT_PROP},
+        ["subject"],
     ),
     _tool(
         "jee_syllabus",
@@ -207,7 +201,7 @@ async def run_tool(name: str, args: dict[str, Any], q: str) -> dict[str, Any]:
     elif name == "jee_reset":
         if not subject:
             return {"ok": False, "error": "subject is required for reset"}
-        if args.get("confirm") is not True or "confirm" not in q.lower():
+        if "confirm" not in q.lower():
             return {
                 "ok": False,
                 "error": "Reset NOT performed. Ask the user to repeat the request "
@@ -270,14 +264,31 @@ async def chat(q: Optional[str] = Query(None)):
         reply: Optional[str] = None
 
         for _ in range(MAX_ROUNDS):
-            resp = await groq.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                tools=TOOLS,
-                tool_choice="auto",
-                temperature=0.2,
-                reasoning_effort="low",
-            )
+            try:
+                resp = await groq.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
+                    temperature=0.2,
+                    reasoning_effort="low",
+                )
+            except Exception as e:
+                detail = str(e)
+                # Groq validates generated tool arguments against the schema and
+                # rejects the whole call (e.g. "expected string, but got null").
+                # Tell the model what went wrong and let it try again.
+                if "tool_use_failed" in detail or "did not match schema" in detail:
+                    messages.append({
+                        "role": "system",
+                        "content": "Your previous tool call was rejected by the "
+                                   "schema validator. Call the tool again with every "
+                                   "argument matching its declared type and enum "
+                                   "exactly. Never send null. Validator said: "
+                                   + detail[:300],
+                    })
+                    continue
+                raise
             msg = resp.choices[0].message
 
             if not msg.tool_calls:
