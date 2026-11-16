@@ -27,6 +27,9 @@ Rules:
   sentences, including the new remaining count when relevant.
 - You can also chat normally on non-tracker questions; if no tool is needed,
   just reply. You may gently steer back to JEE topics when relevant.
+- For overall progress or the full syllabus, pass subject="all".
+- Never send null for any argument. Every parameter you send must match its
+  declared type and enum exactly.
 - Never expose the API key or raw URLs to the user.
 """
 
@@ -58,14 +61,22 @@ def _tool(name: str, description: str, properties: dict, required: list[str]) ->
 
 
 _SUBJECT_PROP = {"type": "string", "enum": SUBJECTS}
+# Groq validates tool arguments strictly: an optional string param that the model
+# fills with null fails with "expected string, but got null". So optional params
+# take an explicit "all" value instead of being omittable.
+_SUBJECT_OPT = {
+    "type": "string",
+    "enum": [*SUBJECTS, "all"],
+    "description": "Subject name, or 'all' for every subject.",
+}
 
 TOOLS = [
     _tool(
         "jee_progress",
         "Get overall progress (total, done, remaining chapters, per-subject breakdown). "
         "Optionally filter by subject.",
-        {"subject": {**_SUBJECT_PROP, "description": "Optional subject filter."}},
-        [],
+        {"subject": _SUBJECT_OPT},
+        ["subject"],
     ),
     _tool(
         "jee_checklist",
@@ -113,8 +124,8 @@ TOOLS = [
     _tool(
         "jee_syllabus",
         "Get the full chapter list with status, optionally for one subject.",
-        {"subject": {**_SUBJECT_PROP, "description": "Optional subject filter."}},
-        [],
+        {"subject": _SUBJECT_OPT},
+        ["subject"],
     ),
 ]
 
@@ -149,7 +160,7 @@ def filter_progress(data: dict[str, Any], subject: str) -> dict[str, Any]:
     kept = [
         r for r in rows
         if isinstance(r, dict)
-        and any(isinstance(v, str) and v.lower() == subject for v in r.values())
+        and str(r.get("subject", "")).strip().lower() == subject
     ]
     if not kept:
         return data
@@ -184,6 +195,8 @@ async def call_jee(params: dict[str, str]) -> dict[str, Any]:
 
 async def run_tool(name: str, args: dict[str, Any], q: str) -> dict[str, Any]:
     subject = args.get("subject")
+    if subject == "all":
+        subject = None
     if subject is not None and subject not in SUBJECTS:
         return {"ok": False, "error": f"invalid subject: {subject}"}
 
